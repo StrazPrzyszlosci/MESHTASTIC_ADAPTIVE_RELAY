@@ -13,6 +13,8 @@ Adaptive Relay, no parameter tuning on this base).
 | `raw_boost_mf10/mf5.*` | MF load baselines (dense) | dense x MF x seeds 1-10 at 10/5 s period (local, cross-platform bit-identity verified) |
 | `raw_phy_mf.*` / `raw_phy_ss.*` | PHY robustness (bridge) | bridge x MF/N3S_SHEP2D x seeds 1-10 on MEDIUM_FAST / SHORT_SLOW |
 | `raw_validation.csv` / `raw_validation.jsonl` | Frozen holdout | 17 topologies x MF/N3S_SHEP2D x seeds 1001-1020 = 680 runs |
+| `raw_d5r_*` / `raw_d5v_*` | D5 node-death campaigns | bridge/hub/linear/dense x MF/N3S_SHEP2D x seeds 1-10; critical node killed at t=300s (relay mode; d5v = revived at t=450s) |
+| `raw_d6_*` | D6 watchdog-deafness campaigns | bridge/hub/linear x MF/N3S_SHEP2D x seeds 1-10; RX disabled on the critical node 300-420s (TX unaffected) |
 
 Paired statistics are computed with `panel_stats.py`:
 

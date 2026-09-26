@@ -137,6 +137,46 @@ cost of census suppression in corridor topologies.
 10/10). High-confidence simulation proof-of-concept; the remaining gap
 is hardware (see FIRMWARE_RESOURCE_MODEL.md).
 
+## Failure-scenario campaigns (D5: node death, D6: watchdog deafness)
+
+The port-safety question: is a designated-relay architecture more
+fragile than distributed flooding when a critical node dies, and does
+a deaf watchdog poison routes? Both routers suffer the identical fault.
+
+### D5 — permanent relay-death of the critical node (t=300s, n=10 paired)
+
+| Scenario (killed node) | MF reach | N3S_SHEP2D reach | Δ [95% CI] | wins | vs no-kill Δ |
+|---|---|---|---|---|---|
+| bridge (the bridge node) | 38.14% | 46.23% | **+8.09pp [+6.96,+9.23]** | 10/10 | −0.8pp only |
+| hub (the hub node) | 29.17% | 34.25% | **+5.07pp [+4.59,+5.56]** | 10/10 | unchanged |
+| linear (3 middle nodes) | 20.40% | 23.09% | **+2.69pp [+2.38,+3.01]** | 10/10 | unchanged |
+| dense (control) | 25.80% | 26.53% | +0.74pp [+0.44,+1.03] | 9/10 | no effect |
+
+Adaptive Relay is **not more fragile than flooding** under the death of
+its structurally critical nodes: the advantage survives (−0.8pp worst
+case), failover machinery re-routes without TX storms, and after a
+revive (t=450s) deliveries return to pre-kill levels within one
+60 s window (re-learning works).
+
+### D6 — watchdog deafness (RX disabled 300–420s on the critical node)
+
+| Scenario (deaf node) | Δ reach [95% CI] | wins | false failures / total | recovery after 420s |
+|---|---|---|---|---|
+| bridge | **+8.34pp [+7.47,+9.22]** | 10/10 | **1.4%** | full (above pre-deaf) |
+| hub | **+4.68pp [+4.04,+5.31]** | 10/10 | **4.7%** | full |
+| linear | **+2.17pp [+1.80,+2.54]** | 10/10 | 21.6% | full |
+
+The tri-state watchdog (covered-elsewhere / unknown-second-chance /
+failure) protects innocent relays from a deaf observer: false
+accusations stay at 1.4-4.7% in bridged topologies (higher in chains
+where echo evidence is naturally sparse), and **no false accusation
+permanently poisons routes** — reach returns to pre-deaf levels in
+every scenario once hearing is restored.
+
+**Port-readiness verdict:** the architecture degrades safely under
+both failure modes studied; no death spirals, no permanent route
+poisoning. Remaining pre-port work is the C++ resource mapping itself.
+
 These are **high-confidence simulation proof-of-concept** results — not a
 proven replacement for Managed Flood on hardware.
 
