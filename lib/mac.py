@@ -12,10 +12,27 @@ PROCESSING_TIME_MSEC = 4500
 
 
 def set_transmit_delay(node, packet):  # from RadioLibInterface::setTransmitDelay
+    # ADAPTIVE_RELAY designated-primary relays use the short router-style CW
+    # (single designated transmitter per hop; see lib/adaptive.py). Inert for
+    # other routers, which never set this flag.
+    if getattr(packet, 'fast_cw', False):
+        return get_tx_delay_msec_router_cw(node)
     for p in reversed(node.packetsAtN[node.nodeid]):
         if p.seq == packet.seq and p.rssiAtN[node.nodeid] != 0 and p.receivedAtN[node.nodeid] is True:
             return get_tx_delay_msec_weighted(node, p.rssiAtN[node.nodeid])  # weighted waiting based on RSSI
     return get_tx_delay_msec(node)
+
+
+def get_tx_delay_msec_router_cw(node):
+    """Short contention window (router-role semantics from
+    RadioInterface::getTxDelayMsecWeighted) for ADAPTIVE_RELAY designated
+    primaries: assume good link at the designated hop."""
+    snr = 15  # assume good link at the designated hop
+    SNR_MIN = -20
+    SNR_MAX = 15
+    CWsize = int((snr - SNR_MIN) * (CWmax - CWmin) / (SNR_MAX - SNR_MIN) + CWmin)
+    CW = random.randint(0, 2 * CWsize - 1)
+    return CW * get_current_slot_time()
 
 
 def get_tx_delay_msec_weighted(node, rssi):  # from RadioInterface::getTxDelayMsecWeighted

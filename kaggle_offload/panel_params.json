@@ -1,0 +1,1 @@
+{"commit": null, "matrix": "smoke", "scenarios": "bridge", "variants": "MF,N3S_SHEP2D", "seeds": "1", "workers": 2, "dms": null, "capture_db": null, "clock_drift_ppm": null, "modem": null}

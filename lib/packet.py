@@ -120,6 +120,53 @@ class MeshPacket:
         # Routing
         self.retransmissions = self.conf.maxRetransmission
         self.ackReceived = False
+
+        # ADAPTIVE_RELAY protocol extensions (inert for other routers; all
+        # defaults are no-ops and MANAGED_FLOOD never reads or sets them):
+        # ordered relay designation (analogue of firmware `relay_node` header,
+        # extended to a short ordered list). None/[] = no designation.
+        self.relay_designation = None
+        # bounded mini-flood radius; 0 = no flooding contract on this copy
+        self.flood_ttl = 0
+        # payload-carried sender position (only set for POSITION messages,
+        # mirroring Meshtastic position broadcasts)
+        self.pos_x = None
+        self.pos_y = None
+        # designated-primary relays use the short (router-style) contention
+        # window — only one designated transmitter per hop. Inert for other
+        # routers (never set).
+        self.fast_cw = False
+        # EXPERIMENTAL (ablated): skip dupe-cancel for designated primaries.
+        # Inert unless AR_PARAMS['primary_bypass_dupe_cancel'] is set.
+        self.no_dupe_cancel = False
+        # v0.5 reach-first guard marker (set only by ADAPTIVE_RELAY)
+        self.ar_guard = False
+        # NEIGHBORINFO control packets (never relayed, own metrics)
+        self.is_neighborinfo = False
+        # quantized neighbor table advertised by the sender:
+        # tuple of (nid, pdr_class, etx_class, fresh) — only what sender knows
+        self.ni_neighbors = None
+        # route-discovery probe (simulator equivalent of Meshtastic
+        # Traceroute/RouteDiscovery; control traffic, cost-metered)
+        self.is_probe = False
+        # node the probe is trying to reach (only it responds)
+        self.probe_target = None
+        # unicast reply travelling back to the probe origin
+        self.is_probe_response = False
+        # Echo-Probe neighbor discovery at cold start (control traffic)
+        self.is_echo_probe = False
+        self.is_probe_ack = False
+        # priority marker (Emergency bypass)
+        self.is_emergency = False
+        # LPR potential fields (optional layer, ablated OFF by default)
+        self.potential_to_dest = None
+        self.cost_estimate = None
+        self.packet_class = None
+        self.packet_scope = None
+        self.potential_version = None
+        self.source_potential = None
+        # TX timestamp (for ToA-scaled windows; set at actual TX start)
+        self.timestamp_tx = None
         self.hopLimit = self.tx_node.hopLimit
 
 

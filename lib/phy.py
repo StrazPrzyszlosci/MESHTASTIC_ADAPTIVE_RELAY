@@ -54,9 +54,9 @@ def check_collision(conf, env, packet, rx_nodeId, packetsAtN):
 
 
 def frequency_collision(p1, p2):
-    if abs(p1.freq - p2.freq) <= 120 and (p1.bw == 500 or p2.freq == 500):
+    if abs(p1.freq - p2.freq) <= 120 and (p1.bw == 500 or p2.bw == 500):
         return True
-    elif abs(p1.freq - p2.freq) <= 60 and (p1.bw == 250 or p2.freq == 250):
+    elif abs(p1.freq - p2.freq) <= 60 and (p1.bw == 250 or p2.bw == 250):
         return True
     elif abs(p1.freq - p2.freq) <= 30:
         return True
@@ -68,12 +68,16 @@ def sf_collision(p1, p2):
 
 
 def power_collision(p1, p2, rx_nodeId):
-    powerThreshold = 6  # dB
-    if abs(p1.rssiAtN[rx_nodeId] - p2.rssiAtN[rx_nodeId]) < powerThreshold:
+    """LoRa capture effect. ADAPTIVE_RELAY: threshold is a config param
+    (CAPTURE_THRESHOLD_DB; 0 = OFF -> both collide). Default 6 dB preserves
+    the upstream behavior."""
+    powerThreshold = getattr(conf, 'CAPTURE_THRESHOLD_DB', 6) or 6
+    d = p1.rssiAtN[rx_nodeId] - p2.rssiAtN[rx_nodeId]
+    if not getattr(conf, 'CAPTURE_THRESHOLD_DB', 6) or abs(d) < powerThreshold:
         # packets are too close to each other, both collide
         # return both packets as casualties
         return (p1, p2)
-    elif p1.rssiAtN[rx_nodeId] - p2.rssiAtN[rx_nodeId] < powerThreshold:
+    if d < powerThreshold:
         # p2 overpowered p1, return p1 as casualty
         return (p1,)
     # p2 was the weaker packet, return it as a casualty

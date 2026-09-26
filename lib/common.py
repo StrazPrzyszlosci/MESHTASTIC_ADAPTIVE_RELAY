@@ -1,5 +1,6 @@
 import random
 import os
+import math
 
 import numpy as np
 
@@ -30,6 +31,10 @@ def find_random_position(conf, node_configs) -> (float, float):
         posy = b*conf.YSIZE+conf.OY-conf.YSIZE/2
         pos_candidate = Point(posx, posy, conf.HM)
         if len(node_configs) > 0:
+            # Reset PER candidate: the old sticky flag meant one MINDIST
+            # violation rejected every later candidate -> position stayed
+            # None -> crash on .x (tight layouts, e.g. sparse with seed 18).
+            foundMin = True
             for n in node_configs:
                 dist = n.position.euclidean_distance(pos_candidate)
                 if dist < conf.MINDIST:
@@ -50,6 +55,23 @@ def find_random_position(conf, node_configs) -> (float, float):
         if tries > 1000:
             print('Could not find a location to place the node. Try increasing XSIZE/YSIZE or decreasing MINDIST.')
             break
+    if position is None:
+        # Deterministic fallback: place toward the area center from an
+        # existing node at <= 0.5*MAXRANGE — guaranteed link and in-bounds,
+        # no RNG dependency (keeps runs reproducible instead of crashing).
+        if node_configs:
+            anchor = node_configs[0].position
+            dx, dy = conf.OX - anchor.x, conf.OY - anchor.y
+            norm = math.hypot(dx, dy)
+            if norm < 1e-9:
+                dx, dy, norm = 1.0, 0.0, 1.0
+            r = 0.5 * phy.MAXRANGE
+            if r < 2 * conf.MINDIST:
+                r = 2 * conf.MINDIST
+            position = Point(anchor.x + r * dx / norm,
+                             anchor.y + r * dy / norm, conf.HM)
+        else:
+            position = Point(conf.OX, conf.OY, conf.HM)
     return max(-conf.XSIZE/2, position.x), max(-conf.YSIZE/2, position.y)
 
 # TODO: once lib/interactive no longer uses this, we can remove this and put all distance calculation in Point
