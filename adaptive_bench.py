@@ -165,7 +165,7 @@ DEFAULT_SIMTIME_DEFAULT = 600
 
 def run_one(scenario, variant, seed, simtime_s, period_s, hop_limit, dms,
             capture_db=None, drift_ppm=None, modem=None,
-            n_nodes=None, xsize=None, ysize=None):
+            n_nodes=None, xsize=None, ysize=None, extra=None):
     router, ar_over = VARIANTS[variant]
     cmd = [PY, 'adaptive_run.py', '--scenario', scenario, '--router', router,
            '--seed', str(seed), '--simtime-s', str(simtime_s),
@@ -186,6 +186,11 @@ def run_one(scenario, variant, seed, simtime_s, period_s, hop_limit, dms,
         cmd += ['--xsize', str(xsize)]
     if ysize is not None:
         cmd += ['--ysize', str(ysize)]
+    # D5/D6 pass-through: kill_at_s=300 kill_role=bridge revive_at_s=420
+    # deaf_at_s=300 deaf_until_s=420 deaf_nodes=bridge (generic key=val)
+    for kv in (extra or []):
+        k, v = kv.split('=', 1)
+        cmd += ['--' + k.replace('_', '-'), v]
     tmpf = None
     if ar_over is not None and router == 'ADAPTIVE_RELAY':
         tmpf = os.path.join(OUTDIR, f'_tmp_params_{variant}_{scenario}_{seed}.json')
@@ -248,6 +253,10 @@ def main():
     ap.add_argument('--xsize', type=float, default=None)           # v0.14 S5
     ap.add_argument('--ysize', type=float, default=None)           # v0.14 S5
     ap.add_argument('--workers', type=int, default=4)
+    ap.add_argument('--extra', default=None,
+                    help='runner flag pass-through, comma-separated key=val, '
+                         'e.g. --extra kill_at_s=300,kill_role=bridge,revive_at_s=420 '
+                         '(D5/D6 failure experiments)')
     args = ap.parse_args()
 
     os.makedirs(OUTDIR, exist_ok=True)
@@ -309,10 +318,11 @@ def main():
         writer = csv.DictWriter(cf, fieldnames=fields)
 
     try:
+        extra = args.extra.split(';') if args.extra else []
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
             futs = {ex.submit(run_one, sc, va, se, st, args.period_s, args.hop_limit, args.dms,
                                args.capture_db, args.clock_drift_ppm, args.modem,
-                               args.n_nodes, args.xsize, args.ysize):
+                               args.n_nodes, args.xsize, args.ysize, extra):
                     (sc, va, se) for (sc, va, se, st) in jobs}
             for fut in as_completed(futs):
                 sc, va, se = futs[fut]

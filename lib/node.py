@@ -241,6 +241,12 @@ class MeshNode:
 
         # Generic test hook: when True, node stops relaying (used by failure tests)
         self.failed = False
+        # D5 kill-mode "dead": full silence (generation stops too). "relay"
+        # mode sets only `failed` (node keeps generating, as a demoted client).
+        self.dead = False
+        # D6 deafness test hook: RX disabled while env.now < deaf_until
+        # (radio deaf: TX works, nothing decodes — half-duplex/watchdog stress)
+        self.deaf_until = None
 
         self.env.process(self.track_channel_utilization())
         if not self.is_repeater:  # repeaters don't generate messages themselves
@@ -433,6 +439,11 @@ class MeshNode:
 
     def generate_message(self):
         while True:
+            # D5 failure tests: only full-silence kills stop generation
+            # (`dead` flag); relay-mode kills keep the node as a source.
+            if self.dead:
+                yield self.env.timeout(1000.0)
+                continue
             # Returns -1 if we don't make it before the sim ends
             nextGen = self.get_next_time(self.period)
             # do not generate a message near the end of the simulation (otherwise flooding cannot finish in time)
@@ -530,6 +541,12 @@ class MeshNode:
     def receive(self, in_pipe):
         while True:
             p = yield in_pipe.get()
+
+            # D6 deafness test: during a deaf window the radio decodes
+            # nothing (TX path unaffected). Instrumentation only — affects
+            # MF and AR identically.
+            if self.deaf_until is not None and self.env.now < self.deaf_until:
+                continue
 
             logger.debug(f"{self.env.now:.3f} Node {self.nodeid} fetches packet {p.unique_packet_seq} for msg {p.seq} from {p.txNodeId} from bc_pipe: sensed: {p.sensedByN[self.nodeid]} collided: {p.collidedAtN[self.nodeid]} on air: {p.onAirToN[self.nodeid]}")
             if p.sensedByN[self.nodeid] and p.onAirToN[self.nodeid]:  # start of reception

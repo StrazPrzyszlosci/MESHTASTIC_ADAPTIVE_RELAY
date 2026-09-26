@@ -41,7 +41,16 @@ def main():
     ap.add_argument('--ar-params', default=None)
     ap.add_argument('--kill-at-s', type=float, default=None)
     ap.add_argument('--kill-nodes', default=None, help='comma list')
+    ap.add_argument('--kill-role', default=None,
+                    help='kill by scenario role: bridge|hub|middle (resolved from scenario meta)')
+    ap.add_argument('--kill-mode', default='relay', choices=('relay', 'dead'),
+                    help="relay: node stops relaying but keeps generating (demotion); "
+                         "dead: full silence (hardware death)")
     ap.add_argument('--revive-at-s', type=float, default=None)
+    ap.add_argument('--deaf-at-s', type=float, default=None,
+                    help='D6: start a deaf window (RX disabled) on --deaf-nodes')
+    ap.add_argument('--deaf-until-s', type=float, default=None, help='end of the deaf window')
+    ap.add_argument('--deaf-nodes', default=None, help='comma list, or role name like bridge|hub')
     ap.add_argument('--phy-model', type=int, default=5)
     ap.add_argument('--modem', default='LONG_FAST')
     ap.add_argument('--xsize', type=float, default=None)
@@ -100,25 +109,75 @@ def main():
 
     # planned failure / revival events (failure tests)
     kill_nodes = []
-    if args.kill_at_s is not None and args.kill_nodes:
+    if args.kill_role:
+        # resolve by scenario role: the structurally critical node(s)
+        if args.kill_role == 'bridge':
+            kill_nodes = list(meta.get('bridge_ids', []))
+        elif args.kill_role == 'hub':
+            kill_nodes = [meta.get('hub_id', 0)]
+        elif args.kill_role == 'middle':
+            kill_nodes = [len(node_configs) // 2]
+        else:
+            raise SystemExit(f'unknown --kill-role {args.kill_role}')
+        if not kill_nodes:
+            raise SystemExit(f'scenario {args.scenario} has no {args.kill_role} role')
+        log(f'kill-role {args.kill_role} -> nodes {kill_nodes}')
+    elif args.kill_at_s is not None and args.kill_nodes:
         kill_nodes = [int(x) for x in args.kill_nodes.split(',') if x != '']
-        t_kill = args.kill_at_s * 1000
-        env = sim.get_env()
+    t_kill = args.kill_at_s * 1000 if kill_nodes and args.kill_at_s is not None else None
+    env = sim.get_env()
 
-        def _kill_process():
-            yield env.timeout(t_kill)
+    def _kill_process():
+        yield env.timeout(t_kill)
+        for nid in kill_nodes:
+            node = sim.mutated_state.nodes[nid]
+            node.failed = True
+            if args.kill_mode == 'dead':
+                node.dead = True
+            log(f't={env.now}: node {nid} KILLED (mode={args.kill_mode})')
+        if args.revive_at_s is not None:
+            yield env.timeout(args.revive_at_s * 1000 - t_kill)
             for nid in kill_nodes:
                 node = sim.mutated_state.nodes[nid]
-                node.failed = True
-                log(f't={env.now}: node {nid} KILLED (failed=True)')
-            if args.revive_at_s is not None:
-                yield env.timeout(args.revive_at_s * 1000 - t_kill)
-                for nid in kill_nodes:
-                    node = sim.mutated_state.nodes[nid]
-                    node.failed = False
-                    log(f't={env.now}: node {nid} REVIVED')
+                node.failed = False
+                node.dead = False
+                log(f't={env.now}: node {nid} REVIVED')
 
+    if t_kill is not None:
         env.process(_kill_process())
+
+    # D6 deafness window: RX disabled on given nodes (TX unaffected)
+    deaf_nodes = []
+    if args.deaf_at_s is not None:
+        dn = args.deaf_nodes or ''
+        if dn in ('bridge', 'hub', 'middle'):
+            # same role resolution as kill
+            if dn == 'bridge':
+                deaf_nodes = list(meta.get('bridge_ids', []))
+            elif dn == 'hub':
+                deaf_nodes = [meta.get('hub_id', 0)]
+            else:
+                deaf_nodes = [len(node_configs) // 2]
+        else:
+            deaf_nodes = [int(x) for x in dn.split(',') if x != '']
+        if not deaf_nodes:
+            raise SystemExit('--deaf-at-s given but no --deaf-nodes resolved')
+
+        def _deaf_process():
+            yield env.timeout(args.deaf_at_s * 1000)
+            for nid in deaf_nodes:
+                node = sim.mutated_state.nodes[nid]
+                node.deaf_until = (args.deaf_until_s if args.deaf_until_s is not None
+                                   else args.simtime_s) * 1000
+                log(f't={env.now}: node {nid} DEAF until {node.deaf_until}')
+            if args.deaf_until_s is not None:
+                yield env.timeout(args.deaf_until_s * 1000 - args.deaf_at_s * 1000)
+                for nid in deaf_nodes:
+                    node = sim.mutated_state.nodes[nid]
+                    node.deaf_until = None
+                    log(f't={env.now}: node {nid} hearing restored')
+
+        env.process(_deaf_process())
 
     sim.run_simulation()
 
@@ -223,6 +282,9 @@ def main():
         'model': args.phy_model, 'packet_len': conf.PACKETLENGTH,
         'movement': conf.MOVEMENT_ENABLED,
         'kill_nodes': kill_nodes, 'kill_at_s': args.kill_at_s,
+        'revive_at_s': args.revive_at_s, 'kill_mode': args.kill_mode,
+        'deaf_nodes': deaf_nodes,
+        'deaf_at_s': args.deaf_at_s, 'deaf_until_s': args.deaf_until_s,
         'ar_params': getattr(conf, 'AR_PARAMS', {}) if args.router == 'ADAPTIVE_RELAY' else None,
 
         # core metrics
