@@ -165,6 +165,15 @@ class MeshPacket:
         self.packet_scope = None
         self.potential_version = None
         self.source_potential = None
+        # Firmware MeshPacket header field: the hop limit at ORIGIN.
+        # Relays copy it unchanged (they only decrement hopLimit), exactly
+        # as in meshtastic firmware. Firmware NodeDB computes
+        # hops_away = hopStart - hopLimit for the originator of ANY decoded
+        # packet (has_hops_away = hopStart set) — pure passive topology
+        # evidence at zero marginal airtime: the field is part of the
+        # already-modeled header. None = unset (firmware: hopStart 0),
+        # and every consumer must degrade gracefully without it.
+        self.hopStart = None
         # TX timestamp (for ToA-scaled windows; set at actual TX start)
         self.timestamp_tx = None
         self.hopLimit = self.tx_node.hopLimit

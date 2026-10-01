@@ -397,6 +397,8 @@ class MeshNode:
         messageSeq = self.messageSeq.get()
         self.messages.append(MeshMessage(self.nodeid, destId, self.env.now, messageSeq))
         p = MeshPacket(self.conf, self.nodes, self.nodeid, destId, self.nodeid, self.conf.PACKETLENGTH, messageSeq, self.env.now, True, False, None, self.env.now, self.connectivity_map, self.baseline_pathloss_matrix)
+        if getattr(self.conf, 'MODEL_HOPSTART', True):
+            p.hopStart = p.hopLimit   # firmware header: hop limit at origin
         if type == "POSITION":
             # position packets carry the sender's coordinates (as in firmware)
             p.pos_x, p.pos_y = self.position.x, self.position.y
@@ -648,6 +650,7 @@ class MeshNode:
                             self.my_stats.packetsRebroadcast += 1
                             pNew = MeshPacket(self.conf, self.nodes, p.origTxNodeId, p.destId, self.nodeid, p.packetLen, p.seq, p.genTime, p.wantAck, False, None, self.env.now, self.connectivity_map, self.baseline_pathloss_matrix)
                             pNew.hopLimit = p.hopLimit - 1
+                            pNew.hopStart = getattr(p, 'hopStart', None)
                             self.packets.append(pNew)
                             self.env.process(self.transmit(pNew))
                     elif self.conf.SELECTED_ROUTER_TYPE == self.conf.ROUTER_TYPE.ADAPTIVE_RELAY:

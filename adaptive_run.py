@@ -51,6 +51,9 @@ def main():
                     help='D6: start a deaf window (RX disabled) on --deaf-nodes')
     ap.add_argument('--deaf-until-s', type=float, default=None, help='end of the deaf window')
     ap.add_argument('--deaf-nodes', default=None, help='comma list, or role name like bridge|hub')
+    ap.add_argument('--no-hopstart', action='store_true',
+                    help='ablation: packets do not carry hopStart (NodeDB-evidence '
+                         'absent world; router must degrade to baseline)')
     ap.add_argument('--phy-model', type=int, default=5)
     ap.add_argument('--modem', default='LONG_FAST')
     ap.add_argument('--xsize', type=float, default=None)
@@ -67,6 +70,8 @@ def main():
     conf.SIMTIME = args.simtime_s * 1000
     conf.PERIOD = args.period_s * 1000
     conf.MODEL = args.phy_model
+    if args.no_hopstart:
+        conf.MODEL_HOPSTART = False
     conf.MODEM_PRESET = args.modem
     if args.xsize:
         conf.XSIZE = args.xsize
