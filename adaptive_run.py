@@ -199,6 +199,14 @@ def main():
     received = sum(sum(p.receivedAtN) for p in pkts)
     useful = sum(n.usefulPackets for n in nodes)
     delays = sim.data_tracking.delays
+    # NOTE (quiet-regime limitation, found 2026-10-01): usefulPackets counts
+    # EVERY decoded packet carrying "new" information — including ACKs — while
+    # the denominator counts data messages only. At the busy loads of the
+    # campaign panels (30 s period) the contamination is small and identical
+    # across routers (valid A/B); at quiet loads (real-network traffic, 600 s+
+    # periods, DM-heavy) ACK traffic inflates this ratio beyond 100% and the
+    # variant comparison breaks. For quiet-regime claims use TRUE distinct
+    # coverage (per-message receiver sets; see results_summary/README, raw_quiet_*).
     reach = useful / max(msgs * (N - 1), 1)
     dropped = sum(n.droppedByDelay for n in nodes)
     tx_airtime_ms = sum(n.txAirUtilization for n in nodes)
