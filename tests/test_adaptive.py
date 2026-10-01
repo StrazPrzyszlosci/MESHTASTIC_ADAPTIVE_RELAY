@@ -1708,5 +1708,53 @@ class TestExternalAuditFixes(unittest.TestCase):
         self.assertGreater(v, 0.05)
 
 
+class TestNDBK2Shield(unittest.TestCase):
+    """Pre-registered experiment: NodeDB thin/chain evidence raises the
+    rank2-fallback K2 (the documented home of the rural_corridor loss).
+    K only ever rises; no evidence -> exact baseline K2."""
+
+    def _nb(self, ar, nid):
+        ar.neighbors[nid] = NeighborInfo(0, -80.0, 0, 0.5, 0.9, 4)
+
+    def test_rank2_baseline_without_shield(self):
+        ar = make_ar(n3_enabled=True, n1_mode='ndb', ndb_enabled=True,
+                     ndb_k2_shield=False)
+        self.assertEqual(ar._rank_k(2, StubPacket(seq=1)), 2)
+
+    def test_rank2_shield_raised_with_thin_evidence(self):
+        ar = make_ar(n3_enabled=True, n1_mode='ndb', ndb_enabled=True,
+                     ndb_k2_shield=True)
+        for nid in range(6):
+            self._nb(ar, nid)
+        ar.structural_risk = lambda: 0.0
+        for o in range(10):                        # evidence floor met
+            ar.nodedb[o] = {'hops': 2, 't': 1}
+        self.assertEqual(ar._rank_k(2, StubPacket(seq=1)), 99)
+        self.assertEqual(ar.stats.get('ndb_k2_shield', 0), 1)
+
+    def test_rank2_shield_grace_without_evidence(self):
+        ar = make_ar(n3_enabled=True, n1_mode='ndb', ndb_enabled=True,
+                     ndb_k2_shield=True)
+        for nid in range(6):
+            self._nb(ar, nid)
+        ar.structural_risk = lambda: 0.0           # nodedb empty (cold start / ablation)
+        self.assertEqual(ar._rank_k(2, StubPacket(seq=1)), 2)
+
+    def test_rank0_rank1_unchanged_by_k2_shield(self):
+        # mixed-like profile (wide 2-hop spread, near origins) so the
+        # rank1 ndb census keeps its baseline K — isolating the k2 flag
+        ar = make_ar(n3_enabled=True, n1_mode='ndb', ndb_enabled=True,
+                     ndb_k2_shield=True)
+        for nid in range(6):
+            self._nb(ar, nid)
+        ar.structural_risk = lambda: 0.0
+        ar.neighbors_of_nb = {nid: {100 + i for i in range(20)} for nid in range(6)}
+        for o in range(10):
+            ar.nodedb[o] = {'hops': 2, 't': 1}
+        self.assertEqual(ar._rank_k(0, StubPacket(seq=1)), 99)
+        self.assertEqual(ar._rank_k(1, StubPacket(seq=1)), 3)   # mixed baseline K
+        self.assertEqual(ar._rank_k(2, StubPacket(seq=1)), 2)  # not thin -> baseline K2
+
+
 if __name__ == '__main__':
     unittest.main()

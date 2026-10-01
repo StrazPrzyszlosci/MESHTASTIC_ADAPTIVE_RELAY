@@ -15,6 +15,7 @@ Adaptive Relay, no parameter tuning on this base).
 | `raw_validation.csv` / `raw_validation.jsonl` | Frozen holdout | 17 topologies x MF/N3S_SHEP2D x seeds 1001-1020 = 680 runs |
 | `raw_d5r_*` / `raw_d5v_*` | D5 node-death campaigns | bridge/hub/linear/dense x MF/N3S_SHEP2D x seeds 1-10; critical node killed at t=300s (relay mode; d5v = revived at t=450s) |
 | `raw_d6_*` | D6 watchdog-deafness campaigns | bridge/hub/linear x MF/N3S_SHEP2D x seeds 1-10; RX disabled on the critical node 300-420s (TX unaffected) |
+| `raw_ndb_*` | NodeDB-analog layer verdict panel | 5 topologies x N3S_SHEP2D_NDB x seeds 1-10 (paired vs raw_dev baselines). VERDICT: INERT — bit-identical to N3S_SHEP2D in dense/rural/linear, bridge +0.04pp (noise); census shields fired but K was non-binding; the rural_corridor loss lives in rank2-fallback (K2), not rank1 census. Layer kept gated OFF. |
 
 Paired statistics are computed with `panel_stats.py`:
 

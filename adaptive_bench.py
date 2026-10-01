@@ -129,6 +129,10 @@ VARIANTS = {
     'N3S_SHEP2D': ('ADAPTIVE_RELAY', {'n3_enabled': True, 'n3_order_policy': 'strong_first',
                                        'n1_mode': 'degree', 'n3_gap_toa': 1.25,
                                        'shepherd_enabled': True}),
+    'N3S_SHEP2D_NDB': ('ADAPTIVE_RELAY', {'n3_enabled': True, 'n3_order_policy': 'strong_first',
+                                            'n1_mode': 'ndb', 'n3_gap_toa': 1.25,
+                                            'shepherd_enabled': True, 'ndb_enabled': True,
+                                            'ndb_k2_shield': True}),
     # v0.14 E7/N4: airtime-budgeted rescue on the hybrid (bucket in ms of
     # real ToA; AIMD; structural multiplier)
     'N3S_SHEP2_N4': ('ADAPTIVE_RELAY', {'n3_enabled': True, 'n3_order_policy': 'strong_first',
@@ -190,7 +194,12 @@ def run_one(scenario, variant, seed, simtime_s, period_s, hop_limit, dms,
     # deaf_at_s=300 deaf_until_s=420 deaf_nodes=bridge (generic key=val)
     for kv in (extra or []):
         k, v = kv.split('=', 1)
-        cmd += ['--' + k.replace('_', '-'), v]
+        flag = '--' + k.replace('_', '-')
+        # boolean convention: k=1/true/on -> bare flag (store_true)
+        if v.lower() in ('1', 'true', 'on', 'yes'):
+            cmd += [flag]
+        else:
+            cmd += [flag, v]
     tmpf = None
     if ar_over is not None and router == 'ADAPTIVE_RELAY':
         tmpf = os.path.join(OUTDIR, f'_tmp_params_{variant}_{scenario}_{seed}.json')

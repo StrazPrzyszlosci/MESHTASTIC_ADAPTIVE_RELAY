@@ -1501,7 +1501,9 @@ class AdaptiveRelay:
         Bounded (evict oldest); clamped to plausible hop counts."""
         if not self.p.get('ndb_enabled', False):
             return
-        hops = max(1, min(int(hops), 7))
+        # protobuf mesh.proto: hops_away is "0 if adjacent" — direct
+        # neighbors' own packets travel 0 relays; upper clamp = plausible hop span
+        hops = max(0, min(int(hops), 7))
         ent = self.nodedb.get(origin)
         if ent is not None:
             ent['hops'] = hops
@@ -1547,6 +1549,23 @@ class AdaptiveRelay:
         return {'degree': deg, 'n2u': n2u, 'origins': origins,
                 'far_ratio': far_ratio, 'dupe': dupe, 'decided': decided}
 
+    def _ndb_shield_active(self):
+        """Shared evidence-gated thin/chain shield (rank1 K and rank2 K2).
+        True only with sufficient NodeDB evidence (origins floor) AND a
+        thin-structure or long-chain profile. Graceful: no evidence ->
+        False -> callers keep their baseline behavior exactly."""
+        if not self.p.get('ndb_enabled', False):
+            return False
+        prof = self._ndb_profile()
+        if prof['origins'] < int(self.p.get('ndb_min_origins', 8)):
+            return False
+        deg = prof['degree']
+        if prof['n2u'] < float(self.p.get('ndb_thin_n2_ratio', 1.5)) * deg:
+            return True
+        if prof['far_ratio'] >= float(self.p.get('ndb_far_ratio', 0.35)):
+            return True
+        return False
+
     def _n1_k(self, p):
         """Census threshold K (copies needed to suppress).
         fixed: CBB baseline. degree (N1b): MORE redundancy -> EASIER to
@@ -1571,18 +1590,9 @@ class AdaptiveRelay:
             # (graceful: absence of data must never change decisions).
             if not self.p.get('ndb_enabled', False):
                 return base
-            prof = self._ndb_profile()
-            if prof['origins'] < int(self.p.get('ndb_min_origins', 8)):
-                return base                    # cold start / ablation: no evidence yet
-            # thin-structure shield (corridor/strip): nearly every node I
-            # heard indirectly is also a direct neighbor -> my silence in
-            # the strip's thin lateral structure is dangerous
-            if prof['n2u'] < float(self.p.get('ndb_thin_n2_ratio', 1.5)) * deg:
-                self.stats['ndb_census_shield'] += 1
-                return 99
-            # long-chain shield: much of my heard topology travels far —
-            # suppression in a chain starves the far end
-            if prof['far_ratio'] >= float(self.p.get('ndb_far_ratio', 0.35)):
+            if self._ndb_shield_active():
+                # thin-structure (corridor/strip) or long-chain profile:
+                # silence in a thin lateral structure / chain is dangerous
                 self.stats['ndb_census_shield'] += 1
                 return 99
             return base
@@ -1682,6 +1692,23 @@ class AdaptiveRelay:
         self.env.process(self._n3_decide(p, rank))
         return True
 
+    def _rank_k(self, rank, p):
+        """Census threshold by N3 rank. rank0: preferred (forward).
+        rank1: mode-dependent census. rank2: near-silence fallback K2 —
+        and the NodeDB evidence target: in thin/chain topologies the
+        fallback's fixed K2 is exactly where the rural_corridor loss
+        lives (panel: 72/72 corridor suppressions were rank2), so the
+        thin/chain shield raises K2 there (K only ever rises)."""
+        if rank == 0:
+            return 99                      # preferred: forward (echo-cancel still applies)
+        if rank == 1:
+            return self._n1_k(p)           # census threshold (mode-dependent)
+        k = int(self.p.get('n3_k2', 2))
+        if self.p.get('ndb_k2_shield', False) and self._ndb_shield_active():
+            self.stats['ndb_k2_shield'] = self.stats.get('ndb_k2_shield', 0) + 1
+            return 99                      # thin/chain: fallback stays armed, never suppresses
+        return k
+
     def _n3_decide(self, p, rank):
         toa = self._packet_toa_ms(p)
         gap = float(self.p.get('n3_gap_toa', 1.25)) * toa
@@ -1694,12 +1721,7 @@ class AdaptiveRelay:
             return
         ent['decided'] = True
         copies = len(ent['ids'])
-        if rank == 0:
-            k = 99                          # preferred: forward (echo-cancel still applies)
-        elif rank == 1:
-            k = self._n1_k(p)               # census threshold (mode-dependent)
-        else:
-            k = int(self.p.get('n3_k2', 2))  # fallback: fires only in near-silence
+        k = self._rank_k(rank, p)
         if copies >= k:
             # v0.14 E8: SHEPHERD as the SECOND line — a census suppression
             # under an active COLLECT lease means the network corroborated

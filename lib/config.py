@@ -39,6 +39,11 @@ class Config:
         self.SIMTIME = 30 * self.ONE_MIN_INTERVAL  # duration of one simulation in ms
         self.INTERFERENCE_LEVEL = 0.05  # chance that at a given moment there is already a LoRa packet being sent on your channel, outside of the Meshtastic traffic. Given in a ratio from 0 to 1.
         self.COLLISION_DUE_TO_INTERFERENCE = False
+        # Sim-level model of the firmware MeshPacket hopStart header field
+        # (hops_away evidence source). False = ablation world: the field is
+        # not carried, NodeDB-analog stays empty, all consumers degrade to
+        # baseline behavior (used to prove graceful absence-of-data).
+        self.MODEL_HOPSTART = True
         # ADAPTIVE_RELAY realism knobs (defaults = historical upstream behavior)
         self.CAPTURE_THRESHOLD_DB = 6   # LoRa capture effect; 0 = OFF (both collide)
         self.CLOCK_DRIFT_PPM = 0       # per-node deterministic drift (+/-); 0 = perfect clocks
@@ -666,7 +671,15 @@ class Config:
             'n4_struct_w': 1.0,               # frontier-risk cap multiplier weight
             # --- v0.14 N1: receiver-evidence census (CBB / N1a/b/c) ---
             'n1_enabled': False,              # replaces broadcast decision paths
-            'n1_mode': 'fixed',               # fixed | degree | adaptive
+            'n1_mode': 'fixed',               # fixed | degree | adaptive | ndb
+            # --- v2 NodeDB analog (passive hops_away; firmware NodeDB.cpp) ---
+            'ndb_enabled': False,       # master switch; off == baseline
+            'ndb_max_entries': 64,      # bounded origin table (TOP-K discipline)
+            'ndb_min_origins': 8,       # evidence floor before any profile decision
+            'ndb_far_hops': 4,          # origin counts as "far" at >= this
+            'ndb_far_ratio': 0.35,      # far-origins share -> chain shield
+            'ndb_thin_n2_ratio': 1.5,   # unique-2hop < 1.5*degree -> thin shield
+            'ndb_k2_shield': False,      # rank2-fallback K2 raised by thin/chain evidence
             'n1_k': 3,                        # CBB suppression threshold (copies)
             'n1_w_toa': 1.0,                  # census window in ToA multiples
             'n1_max_census_ids': 8,           # static census bound (nRF52840)
