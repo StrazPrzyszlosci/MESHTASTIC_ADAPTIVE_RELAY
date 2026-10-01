@@ -18,6 +18,30 @@ from lib.point import Point
 logger = logging.getLogger(__name__)
 
 
+class _MaskedCopy:
+    """REALISTIC_WIRE observability view of a received packet.
+
+    In real Meshtastic a rebroadcast keeps from = originator, so the
+    receiver of a RELAYED copy cannot attribute it to the relaying node
+    (the firmware relay_node field is a 1-byte collision-prone hint, not
+    modeled here). This proxy hides txNodeId for relayed copies; a
+    packet ORIGINATED by the transmitter (orig == tx) keeps the identity:
+    whoever you decode is by definition a 1-hop neighbor, and for their
+    own traffic the from-field identifies them. Every other attribute is
+    forwarded unchanged (proxy)."""
+    __slots__ = ('_p',)
+
+    def __init__(self, p):
+        self._p = p
+
+    def __getattr__(self, name):
+        return getattr(self._p, name)
+
+    @property
+    def txNodeId(self):
+        return self._p.txNodeId if self._p.origTxNodeId == self._p.txNodeId else None
+
+
 def node_clock_scale(nodeid, seed, ppm):
     """Per-node deterministic clock drift (numeric hash — no RNG stream use,
     so other draws stay untouched). Local timer of L ms takes L / clock_scale
@@ -244,6 +268,9 @@ class MeshNode:
         # D5 kill-mode "dead": full silence (generation stops too). "relay"
         # mode sets only `failed` (node keeps generating, as a demoted client).
         self.dead = False
+        # REALISTIC_WIRE: apply the router observability view at the hook
+        # boundary (see _MaskedCopy); no-op when the flag is off
+        self._rw = bool(getattr(self.conf, 'REALISTIC_WIRE', False))
         # D6 deafness test hook: RX disabled while env.now < deaf_until
         # (radio deaf: TX works, nothing decodes — half-duplex/watchdog stress)
         self.deaf_until = None
@@ -439,6 +466,14 @@ class MeshNode:
         return False
 
 
+    def _router_view(self, p):
+        """Firmware-realistic view of a received packet for the router:
+        relayed copies lose the transmitter identity, originated packets
+        keep it. No-op (the same object) when REALISTIC_WIRE is off."""
+        if not self._rw or p.origTxNodeId == p.txNodeId:
+            return p
+        return _MaskedCopy(p)
+
     def generate_message(self):
         while True:
             # D5 failure tests: only full-silence kills stop generation
@@ -557,13 +592,17 @@ class MeshNode:
                     # Mark it as no-longer on air and leave further processing to
                     # the 'end of transmission' branch
                     p.onAirToN[self.nodeid] = False
-                    if self.adaptive is not None:
+                    if self.adaptive is not None and not getattr(self.conf, 'REALISTIC_WIRE', False):
+                        # collided frames cannot be attributed to a packet id
+                        # by real hardware (CAD sees energy, not content) —
+                        # the router must not learn per-seq in-air facts from
+                        # them under the realistic observability model
                         self.adaptive.note_rx_start(p, collided=True)
                 elif not self.isTransmitting:
                     logger.debug(f"{self.env.now:.3f} Node {self.nodeid} started receiving packet {p.unique_packet_seq} for msg {p.seq} from {p.txNodeId}")
                     p.onAirToN[self.nodeid] = False
                     if self.adaptive is not None:
-                        self.adaptive.note_rx_start(p)
+                        self.adaptive.note_rx_start(self._router_view(p))
                     self.isReceiving.append(True)
                 else:  # if you were currently transmitting, you could not have sensed it
                     logger.debug(f"{self.env.now:.3f} Node {self.nodeid} was transmitting, so could not receive packet {p.unique_packet_seq} for msg {p.seq}")
@@ -576,7 +615,7 @@ class MeshNode:
                     pass
                 self.airUtilization += p.timeOnAir
                 if self.adaptive is not None:
-                    self.adaptive.note_rx_end(p)
+                    self.adaptive.note_rx_end(self._router_view(p))
                 # begin receiving packet fine, but a collision begins before we finish receiving.
                 if p.collidedAtN[self.nodeid]:
                     logger.debug(f"{self.env.now:.3f} Node {self.nodeid} could not decode packet {p.unique_packet_seq}.")
@@ -601,7 +640,7 @@ class MeshNode:
 
                 # ADAPTIVE_RELAY: passive learning from every decoded packet
                 if self.adaptive is not None:
-                    self.adaptive.learn(p, p.rssiAtN[self.nodeid])
+                    self.adaptive.learn(self._router_view(p), p.rssiAtN[self.nodeid])
 
                 # check if implicit ACK for own generated message
                 if p.origTxNodeId == self.nodeid:
@@ -655,7 +694,7 @@ class MeshNode:
                             self.env.process(self.transmit(pNew))
                     elif self.conf.SELECTED_ROUTER_TYPE == self.conf.ROUTER_TYPE.ADAPTIVE_RELAY:
                         # All ADAPTIVE_RELAY forwarding logic lives in lib/adaptive.py
-                        self.adaptive.on_received(p)
+                        self.adaptive.on_received(self._router_view(p))
                 else:
                     # control packets (NEIGHBORINFO/probe) are never relayed by
                     # design — they are not "dropped" user traffic

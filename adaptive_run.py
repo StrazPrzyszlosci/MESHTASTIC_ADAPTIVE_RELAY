@@ -51,6 +51,10 @@ def main():
                     help='D6: start a deaf window (RX disabled) on --deaf-nodes')
     ap.add_argument('--deaf-until-s', type=float, default=None, help='end of the deaf window')
     ap.add_argument('--deaf-nodes', default=None, help='comma list, or role name like bridge|hub')
+    ap.add_argument('--realistic-wire', action='store_true',
+                    help='firmware-realistic router observability: relayed copies '
+                         'lose the transmitter identity (from=originator in real '
+                         'rebroadcasts), collided frames are not attributed')
     ap.add_argument('--no-hopstart', action='store_true',
                     help='ablation: packets do not carry hopStart (NodeDB-evidence '
                          'absent world; router must degrade to baseline)')
@@ -72,6 +76,8 @@ def main():
     conf.MODEL = args.phy_model
     if args.no_hopstart:
         conf.MODEL_HOPSTART = False
+    if args.realistic_wire:
+        conf.REALISTIC_WIRE = True
     conf.MODEM_PRESET = args.modem
     if args.xsize:
         conf.XSIZE = args.xsize

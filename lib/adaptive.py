@@ -1034,7 +1034,7 @@ class AdaptiveRelay:
             # v0.8 LPR: passive potential observation — a packet originated at
             # dest relayed by tx reached me at hop_depth hops from the origin;
             # local distance-vector estimate (no oracle, no global map)
-            if self.p.get('enable_lpr', False) and p.origTxNodeId != tx:
+            if self.p.get('enable_lpr', False) and tx is not None and p.origTxNodeId != tx:
                 # firmware-faithful distance: hop_start - hop_limit
                 # (per-packet origin value, NOT the global config; hop_start
                 # is a real MeshPacket header field — see lib/packet.py)
@@ -1065,6 +1065,15 @@ class AdaptiveRelay:
                 self._expire_advertised(now)
                 if self.p.get('segmentation', 'adaptive') != 'off':
                     self._recompute_segments(now)
+            return
+        if tx is None:
+            # REALISTIC_WIRE: unattributed relayed copy — a real node cannot
+            # hang this observation on a specific neighbor, so per-neighbor
+            # learning, POSITION attribution, 2-hop pairs and per-relay
+            # bookkeeping are all skipped (RSSI of the LAST hop exists but
+            # belongs to an unknown relay). Seq-level bookkeeping below
+            # still records that the packet progressed.
+            self.packet_relayers.setdefault(p.seq, set()).add(None)
             return
         nb = self.neighbors.get(tx)
         if nb is None:
@@ -1610,7 +1619,11 @@ class AdaptiveRelay:
                 return False
             ids = ent['ids']
             tx = p.txNodeId
-            if tx != self.node.nodeid and tx not in ids:
+            if tx is None:
+                if len(ids) < int(self.p.get('n1_max_census_ids', 8)):
+                    ids.append(None)          # REALISTIC_WIRE: unattributed
+                                             # copy — counted, never deduped
+            elif tx != self.node.nodeid and tx not in ids:
                 if len(ids) < int(self.p.get('n1_max_census_ids', 8)):
                     ids.append(tx)             # else: spec — ignore extra ids
             return False
@@ -1679,7 +1692,10 @@ class AdaptiveRelay:
                 return False
             ids = ent['ids']
             tx = p.txNodeId
-            if tx != self.node.nodeid and tx not in ids \
+            if tx is None:
+                if len(ids) < int(self.p.get('n1_max_census_ids', 8)):
+                    ids.append(None)          # REALISTIC_WIRE: copy counting
+            elif tx != self.node.nodeid and tx not in ids \
                     and len(ids) < int(self.p.get('n1_max_census_ids', 8)):
                 ids.append(tx)
             return False
@@ -2572,6 +2588,8 @@ class AdaptiveRelay:
     # v0.9 asymmetric-link tolerance + S&F gatekeeper + zero-jitter
     # ==================================================================
     def _asymmetric_blind(self, nid):
+        if nid is None:
+            return False    # REALISTIC_WIRE: unattributed -> not a KNOWN blind spot
         """True when the link to the neighbor is an asymmetric blind spot:
         v0.10 audit: BOTH conditions required (rssi < threshold AND pdr <
         asymmetric_pdr_max) — the rssi-only variant marked too many links

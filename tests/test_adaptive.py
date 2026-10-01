@@ -1756,5 +1756,58 @@ class TestNDBK2Shield(unittest.TestCase):
         self.assertEqual(ar._rank_k(2, StubPacket(seq=1)), 2)  # not thin -> baseline K2
 
 
+class TestRealisticWire(unittest.TestCase):
+    """REALISTIC_WIRE observability degradation (external-audit response):
+    relayed copies lose the transmitter identity (real rebroadcast keeps
+    from=originator), collided frames are not attributed, census counts
+    copies (no dedupe without identity), per-neighbor learning happens
+    only from originated traffic."""
+
+    def test_view_masks_relayed_copies(self):
+        from lib.node import _MaskedCopy
+        p = StubPacket(seq=1, orig=9, tx=5)          # relayed copy
+        v = _MaskedCopy(p)
+        self.assertIsNone(v.txNodeId)
+        self.assertEqual(v.seq, 1)                    # attrs forwarded
+        self.assertEqual(v.origTxNodeId, 9)
+        p2 = StubPacket(seq=1, orig=5, tx=5)          # originated
+        v2 = _MaskedCopy(p2)
+        self.assertEqual(v2.txNodeId, 5)             # identity kept
+
+    def test_census_counts_unattributed_copies(self):
+        ar = make_ar(n1_enabled=True, n1_mode='fixed', n1_k=3)
+        ar._n1_census[1] = {'ids': [None], 'decided': False, 't0': 0}
+        p = StubPacket(seq=1, tx=7)
+        p.origTxNodeId = 9
+        class PProxy:
+            def __init__(s, tx): s.txNodeId = tx; s.seq = 1
+        ar._n1_handle(PProxy(None))
+        ar._n1_handle(PProxy(None))
+        ent = ar._n1_census[1]
+        self.assertEqual(len(ent['ids']), 3)   # every copy counted, no dedupe
+
+    def test_learn_skips_neighbor_for_unattributed(self):
+        from lib.node import _MaskedCopy
+        ar = make_ar()
+        p = StubPacket(seq=1, orig=9, tx=7)
+        v = _MaskedCopy(p)                       # full attr forwarding, tx masked
+        self.assertIsNone(v.txNodeId)
+        ar.learn(v, -80.0)
+        self.assertNotIn(None, ar.neighbors)    # no phantom neighbor
+        self.assertNotIn(7, ar.neighbors)      # relayer identity truly hidden
+        self.assertIn(None, ar.packet_relayers[1])  # progression marker kept
+
+    def test_asymmetric_blind_unknown_relayer(self):
+        ar = make_ar()
+        self.assertFalse(ar._asymmetric_blind(None))
+
+    def test_echo_probe_originated_keeps_identity(self):
+        from lib.node import _MaskedCopy
+        p = StubPacket(seq=1, orig=5, tx=5)
+        p.is_echo_probe = True
+        v = _MaskedCopy(p)
+        self.assertEqual(v.txNodeId, 5)   # probe ACK path still attributed
+
+
 if __name__ == '__main__':
     unittest.main()

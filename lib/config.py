@@ -44,6 +44,13 @@ class Config:
         # not carried, NodeDB-analog stays empty, all consumers degrade to
         # baseline behavior (used to prove graceful absence-of-data).
         self.MODEL_HOPSTART = True
+        # Firmware-realistic ROUTER observability model: relayed copies do
+        # not carry a usable transmitter identity (real rebroadcast keeps
+        # from = originator; relay_node is only a 1-byte hint). When True,
+        # the router sees txNodeId only for packets originated by the
+        # 1-hop transmitter, and collided frames are not attributed to a
+        # packet id. False (default) = full simulator observability.
+        self.REALISTIC_WIRE = False
         # ADAPTIVE_RELAY realism knobs (defaults = historical upstream behavior)
         self.CAPTURE_THRESHOLD_DB = 6   # LoRa capture effect; 0 = OFF (both collide)
         self.CLOCK_DRIFT_PPM = 0       # per-node deterministic drift (+/-); 0 = perfect clocks
