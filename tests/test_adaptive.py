@@ -1550,5 +1550,163 @@ class TestCefBoost(unittest.TestCase):
         self.assertTrue(ar._cef_boost)
 
 
+class TestNodeDBLayer(unittest.TestCase):
+    """v2 NodeDB analog: passive hops_away from the hopStart header field
+    (firmware NodeDB semantics), the census profile shields, mini-flood
+    radius scaling — and the GRACE contract: without evidence the router
+    must make bit-identical decisions to the degree heuristic."""
+
+    def _nb(self, ar, nid):
+        ar.neighbors[nid] = NeighborInfo(0, -80.0, 0, 0.5, 0.9, 4)
+
+    def test_ndb_update_passive_and_bounded(self):
+        ar = make_ar(ndb_enabled=True)
+        p = StubPacket(seq=1, orig=7)
+        p.hopStart = 5
+        p.hopLimit = 3
+        ar.learn(p, -80.0)
+        self.assertIn(7, ar.nodedb)
+        self.assertEqual(ar.nodedb[7]['hops'], 2)   # hopStart - hopLimit
+        # bound: eviction of the oldest entry
+        for o in range(100, 200):
+            p2 = StubPacket(seq=o, orig=o)
+            p2.hopStart, p2.hopLimit = 5, 4
+            ar.learn(p2, -80.0)
+        self.assertLessEqual(len(ar.nodedb), int(ar.p['ndb_max_entries']))
+
+    def test_ndb_update_gated_without_hopstart(self):
+        ar = make_ar(ndb_enabled=True)
+        p = StubPacket(seq=1, orig=7)
+        assert not hasattr(p, 'hopStart') or getattr(p, 'hopStart', None) is None
+        ar.learn(p, -80.0)
+        self.assertEqual(ar.nodedb, {})   # has_hops_away False -> no entry
+
+    def test_ndb_disabled_no_state(self):
+        ar = make_ar(ndb_enabled=False)
+        p = StubPacket(seq=1, orig=7)
+        p.hopStart, p.hopLimit = 5, 2
+        ar.learn(p, -80.0)
+        self.assertEqual(ar.nodedb, {})
+
+    def test_grace_no_evidence_equals_degree(self):
+        """GRACE CONTRACT: ndb mode with empty nodedb (cold start or
+        ablation world) must return exactly what degree mode returns."""
+        for deg, expect in ((3, 99), (7, 3), (16, 2)):
+            a_deg = make_ar(n1_enabled=True, n1_mode='degree')
+            a_ndb = make_ar(n1_enabled=True, n1_mode='ndb', ndb_enabled=True)
+            for a in (a_deg, a_ndb):
+                for nid in range(deg):
+                    self._nb(a, nid)
+                a.structural_risk = lambda: 0.0
+            self.assertEqual(a_ndb._n1_k(StubPacket(seq=1)), expect)
+            self.assertEqual(a_ndb._n1_k(StubPacket(seq=1)),
+                             a_deg._n1_k(StubPacket(seq=1)))
+
+    def test_thin_shield_off_census(self):
+        """Corridor signature: unique-2hop nearly empty (everyone I hear
+        indirectly is also direct) -> suppression disabled."""
+        ar = make_ar(n1_enabled=True, n1_mode='ndb', ndb_enabled=True)
+        for nid in range(6):                       # degree 6 (above sparse)
+            self._nb(ar, nid)
+        ar.structural_risk = lambda: 0.0
+        # no 2-hop knowledge at all -> thin
+        for o in range(10):                        # sufficient origin evidence
+            ar.nodedb[o] = {'hops': 2, 't': 1}
+        self.assertEqual(ar._n1_k(StubPacket(seq=1)), 99)
+        self.assertEqual(ar.stats.get('ndb_census_shield', 0), 1)
+
+    def test_chain_shield_far_origins(self):
+        ar = make_ar(n1_enabled=True, n1_mode='ndb', ndb_enabled=True)
+        for nid in range(6):
+            self._nb(ar, nid)
+        ar.structural_risk = lambda: 0.0
+        ar.neighbors_of_nb = {nid: {100 + nid} for nid in range(6)}  # n2u = 6 >= 1.5*6? no: 9
+        # n2u=6 < 1.5*6=9 -> thin shield fires anyway; to isolate the far
+        # shield, give wide 2-hop spread:
+        ar.neighbors_of_nb = {nid: {100 + i for i in range(10)} for nid in range(6)}
+        for o in range(10):                        # 10 origins, 5 far (>=4 hops)
+            ar.nodedb[o] = {'hops': (5 if o % 2 == 0 else 2), 't': 1}
+        self.assertEqual(ar._n1_k(StubPacket(seq=1)), 99)   # far_ratio 0.5
+
+    def test_dense_keeps_cheap_silence(self):
+        ar = make_ar(n1_enabled=True, n1_mode='ndb', ndb_enabled=True)
+        for nid in range(16):                      # dense degree
+            self._nb(ar, nid)
+        ar.structural_risk = lambda: 0.0
+        ar.neighbors_of_nb = {nid: {100 + i for i in range(40)} for nid in range(16)}
+        for o in range(10):
+            ar.nodedb[o] = {'hops': 2, 't': 1}     # all near -> far_ratio 0
+        self.assertEqual(ar._n1_k(StubPacket(seq=1)), 2)   # degree baseline kept
+
+    def test_mini_flood_radius_scales_down_only(self):
+        ar = make_ar(ndb_enabled=True, mini_flood_ttl=3)
+        ar.inhibition_strength = lambda seg: 'medium'
+        ar._confidence_level = lambda: 1
+        ar._sparse_guard_active = lambda: False
+        ar._relay_packet = lambda p, **kw: True
+        ar.stats['adaptive_mini_flood_triggered'] = 0
+        ar.stats['adaptive_segment_fallback'] = 0
+        ar._mini_flood_done = set()
+        p = StubPacket(seq=9, dest=42)
+        ar.nodedb[42] = {'hops': 1, 't': 1}         # measured at 1 hop -> radius 2 < 3
+        ar._mini_flood(p)
+        self.assertEqual(ar.stats.get('ndb_radius_scaled', 0), 1)
+        # no entry -> current TTL, no scaling
+        p2 = StubPacket(seq=10, dest=99)
+        ar._mini_flood(p2)
+        self.assertEqual(ar.stats.get('ndb_radius_scaled', 0), 1)   # unchanged
+        # far entry -> never grows beyond the configured TTL
+        p3 = StubPacket(seq=11, dest=77)
+        ar.nodedb[77] = {'hops': 5, 't': 1}
+        ar._mini_flood(p3)
+        self.assertEqual(ar.stats.get('ndb_radius_scaled', 0), 1)   # 6 > 3: no change
+
+
+class TestExternalAuditFixes(unittest.TestCase):
+    """Fixes from the external firmware-realism audit (2026-10-01):
+    LPR hop_depth must use the per-packet hop_start, and neighbor velocity
+    must be time-based on POSITION deltas, not packet inter-arrivals."""
+
+    def test_lpr_hop_depth_from_hop_start(self):
+        ar = make_ar(enable_lpr=True)
+        seen = []
+        ar.potential.observe_relayed_packet = lambda o, tx, d, c, now: seen.append((o, tx, d))
+        p = StubPacket(seq=1, orig=9, tx=5)
+        p.hopStart = 5
+        p.hopLimit = 3
+        ar.learn(p, -80.0)
+        self.assertEqual(seen, [(9, 5, 2)])       # hop_start - hop_limit
+
+    def test_lpr_no_hop_start_no_depth(self):
+        ar = make_ar(enable_lpr=True)
+        seen = []
+        ar.potential.observe_relayed_packet = lambda o, tx, d, c, now: seen.append((o, tx, d))
+        p = StubPacket(seq=1, orig=9, tx=5)
+        p.hopLimit = 3                            # no hopStart -> has_hops_away False
+        ar.learn(p, -80.0)
+        self.assertEqual(seen, [])
+
+    def test_neighbor_velocity_position_dt(self):
+        """POSITION deltas 30 s apart, 10 m apart -> ~0.33 m/s (not the
+        old inflated d/(time-since-last-packet))."""
+        env = ManualEnv()
+        ar = make_ar(env=env)
+        p1 = StubPacket(seq=1, tx=5)
+        p1.pos_x, p1.pos_y = 0.0, 0.0
+        p2 = StubPacket(seq=2, tx=5)
+        p2.pos_x, p2.pos_y = 10.0, 0.0
+        # non-position packet in between refreshes last_seen but must not
+        # affect the velocity delta basis
+        p_mid = StubPacket(seq=3, tx=5)
+        ar.learn(p1, -80.0)
+        env.now = 1000.0                          # plain packet at t=1s
+        ar.learn(p_mid, -80.0)
+        env.now = 31000.0                         # second POSITION at t=31s
+        ar.learn(p2, -80.0)
+        v = ar.neighbors[5].velocity
+        self.assertLess(v, 1.0)                   # ~0.33 m/s, not inflated
+        self.assertGreater(v, 0.05)
+
+
 if __name__ == '__main__':
     unittest.main()

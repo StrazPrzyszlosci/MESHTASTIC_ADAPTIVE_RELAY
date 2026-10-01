@@ -136,6 +136,11 @@ class AdaptiveRelay:
         self.pending = {}                # seq -> defer bookkeeping (my scheduled relay)
         self.expected_relay = {}         # seq -> {'relays': set, 'amb': bool}
         self.routes = {}                 # dest -> {'primary','backup1','backup2',...}
+        # v2 NodeDB analog: origin -> {'hops': hops_away, 't': last_heard_ms}.
+        # Firmware NodeDB.cpp computes the same entry from hopStart of any
+        # decoded packet (has_hops_away guard). Bounded (TOP-K discipline),
+        # passive-only, never consulted unless ndb_enabled.
+        self.nodedb = {}
         self.segment_of = {}             # nid -> segment index (local segmentation)
         self.last_seg_recompute = 0.0
         # v0.13 C1e: per-node suppression-regret EWMA over frontier-candidate
@@ -207,6 +212,9 @@ class AdaptiveRelay:
             'ar_cancel_echo': 0,             # cancelled: echo heard
             'ar_covered_elsewhere': 0,       # watchdog timeout skipped: another relay covered
             'watchdog_false_failure': 0,     # failure marked, packet propagated later
+            'ndb_entries': 0,                   # NodeDB analog high-water mark
+            'ndb_census_shield': 0,             # census suppressed by ndb thin/chain shield
+            'ndb_radius_scaled': 0,             # mini-flood radius shrunk by measured distance
             'suppression_regret': 0,         # suppressed, no propagation evidence later
             'unique_relay_suppressed': 0,    # suppressed while having unique coverage
             'backup1_useful': 0, 'backup1_redundant': 0,
@@ -997,6 +1005,15 @@ class AdaptiveRelay:
         is_ni = getattr(p, 'is_neighborinfo', False)
         is_probe = getattr(p, 'is_probe', False) or getattr(p, 'is_probe_response', False)
 
+        # v2 NodeDB analog: hops_away of the ORIGINATOR from hopStart (the
+        # same computation firmware NodeDB performs on any decoded packet;
+        # has_hops_away False when hopStart unset -> entry untouched).
+        # SNR is never used here for >1-hop origins (firmware caveat: a
+        # NodeDB snr of a remote node describes its last hop, not itself).
+        hs = getattr(p, 'hopStart', None)
+        if hs:
+            self._ndb_update(p.origTxNodeId, int(hs) - int(p.hopLimit))
+
         # v0.5: probe-response arrival at the probe origin = fresh route;
         # wake the waiting DM send (probe-first flow)
         if getattr(p, 'is_probe_response', False) and p.destId == self.node.nodeid:
@@ -1018,7 +1035,11 @@ class AdaptiveRelay:
             # dest relayed by tx reached me at hop_depth hops from the origin;
             # local distance-vector estimate (no oracle, no global map)
             if self.p.get('enable_lpr', False) and p.origTxNodeId != tx:
-                hop_depth = self.conf.hopLimit - p.hopLimit
+                # firmware-faithful distance: hop_start - hop_limit
+                # (per-packet origin value, NOT the global config; hop_start
+                # is a real MeshPacket header field — see lib/packet.py)
+                hs = getattr(p, 'hopStart', None)
+                hop_depth = (int(hs) - int(p.hopLimit)) if hs else 0
                 if hop_depth > 0:
                     hop_cost = p.timeOnAir * 1.25   # ETX 0.8 per-hop assumption
                     self.potential.observe_relayed_packet(
@@ -1063,8 +1084,11 @@ class AdaptiveRelay:
         if pos is not None and getattr(p, 'pos_y', None) is not None:
             if nb.pos is not None and nb._last_pos is not None:
                 # v0.6: neighbor velocity from POSITION deltas (locally
-                # realistic: a real node computes this from received updates)
-                dt = (now - nb.last_seen) / 1000.0
+                # realistic: a real node computes this from received updates).
+                # dt = time since the last POSITION update (_last_pos), NOT
+                # since the last packet (last_seen refreshes on every decode
+                # — using it collapsed dt to ~0 and inflated velocity).
+                dt = (now - nb._last_pos) / 1000.0
                 if dt > 0:
                     d = math.hypot(p.pos_x - nb.pos[0], p.pos_y - nb.pos[1])
                     nb.velocity = _ewma(nb.velocity, d / dt, 0.3)
@@ -1472,6 +1496,57 @@ class AdaptiveRelay:
         all N1 timers are expressed as ToA multiples (never hardcoded ms)."""
         return float(getattr(p, 'timeOnAir', 369.0))
 
+    def _ndb_update(self, origin, hops):
+        """Passive NodeDB-analog update: origin's measured hops_away.
+        Bounded (evict oldest); clamped to plausible hop counts."""
+        if not self.p.get('ndb_enabled', False):
+            return
+        hops = max(1, min(int(hops), 7))
+        ent = self.nodedb.get(origin)
+        if ent is not None:
+            ent['hops'] = hops
+            ent['t'] = self.env.now
+        else:
+            if len(self.nodedb) >= int(self.p.get('ndb_max_entries', 64)):
+                oldest = min(self.nodedb, key=lambda k: self.nodedb[k]['t'])
+                del self.nodedb[oldest]
+            self.nodedb[origin] = {'hops': hops, 't': self.env.now}
+        n = len(self.nodedb)
+        if n > self.stats.get('ndb_entries', 0):
+            self.stats['ndb_entries'] = n
+
+    def _ndb_profile(self):
+        """Aggregate NodeDB-style topology evidence (slow aggregate — never
+        a per-packet loop). All inputs are passively learned and have direct
+        firmware NodeDB counterparts:
+          origins  — distinct originators heard (NodeDB size analog)
+          far_ratio — share of origins measured at >= ndb_far_hops (long
+                     chains: much of the heard topology travels far)
+          n2u     — unique 2-hop nodes beyond direct neighbors (strips:
+                    nearly everyone heard indirectly is also direct)
+          dupe    — mean overheard relayers per census decision
+        GUARDS: >1-hop SNR is never an input (firmware caveat); MQTT-carried
+        knowledge does not exist in this simulator and is not modeled."""
+        deg = len(self.neighbors)
+        n2u = 0
+        if self.neighbors_of_nb:
+            all2 = set()
+            for s in self.neighbors_of_nb.values():
+                all2 |= s
+            n2u = len(all2 - set(self.neighbors))
+        origins = len(self.nodedb)
+        far_h = int(self.p.get('ndb_far_hops', 4))
+        far = sum(1 for e in self.nodedb.values() if e['hops'] >= far_h)
+        far_ratio = (far / float(origins)) if origins else 0.0
+        fwd = self.stats.get('copies_before_forward', 0)
+        sup = self.stats.get('suppressed_by_census', 0)
+        decided = fwd + sup
+        dupe = ((self.stats.get('copies_before_suppress', 0)
+                 + self.stats.get('copies_before_forward', 0)) / float(decided)) \
+            if decided else 0.0
+        return {'degree': deg, 'n2u': n2u, 'origins': origins,
+                'far_ratio': far_ratio, 'dupe': dupe, 'decided': decided}
+
     def _n1_k(self, p):
         """Census threshold K (copies needed to suppress).
         fixed: CBB baseline. degree (N1b): MORE redundancy -> EASIER to
@@ -1482,12 +1557,35 @@ class AdaptiveRelay:
         if mode == 'fixed':
             return int(self.p.get('n1_k', 3))
         deg = len(self.neighbors)
-        if mode == 'degree':
+        if mode in ('degree', 'ndb'):
             if deg <= self.p['density_sparse'] or self.structural_risk() >= 0.5:
                 return 99                      # frontier: suppression disabled
-            if deg >= self.p.get('density_dense', 12):
-                return 2                       # dense: silence comes cheap
-            return 3
+            base = 2 if deg >= self.p.get('density_dense', 12) else 3
+            if mode == 'degree':
+                if base == 2:
+                    return 2                   # dense: silence comes cheap
+                return 3
+            # 'ndb': degree heuristics as the BASELINE, NodeDB-evidence
+            # shields layered on top. Without sufficient passive data the
+            # shields stay silent -> behavior is bit-identical to 'degree'
+            # (graceful: absence of data must never change decisions).
+            if not self.p.get('ndb_enabled', False):
+                return base
+            prof = self._ndb_profile()
+            if prof['origins'] < int(self.p.get('ndb_min_origins', 8)):
+                return base                    # cold start / ablation: no evidence yet
+            # thin-structure shield (corridor/strip): nearly every node I
+            # heard indirectly is also a direct neighbor -> my silence in
+            # the strip's thin lateral structure is dangerous
+            if prof['n2u'] < float(self.p.get('ndb_thin_n2_ratio', 1.5)) * deg:
+                self.stats['ndb_census_shield'] += 1
+                return 99
+            # long-chain shield: much of my heard topology travels far —
+            # suppression in a chain starves the far end
+            if prof['far_ratio'] >= float(self.p.get('ndb_far_ratio', 0.35)):
+                self.stats['ndb_census_shield'] += 1
+                return 99
+            return base
         # n1c adaptive
         k = 2 + int(2.0 * self._cef_frontier_risk(p))   # front risk -> high K
         if self.node.channel_utilization_percent() > 50.0:
@@ -3029,6 +3127,7 @@ class AdaptiveRelay:
                           p.wantAck, False, None, self.env.now,
                           node.connectivity_map, node.baseline_pathloss_matrix)
         pNew.hopLimit = p.hopLimit - 1
+        pNew.hopStart = getattr(p, 'hopStart', None)   # header field, copied unchanged
         if next_flood_ttl:
             pNew.flood_ttl = next_flood_ttl
         # v0.7 WalkFlood backtrack: blind alley -> bounded TTL 1 (recorded on
@@ -3176,6 +3275,18 @@ class AdaptiveRelay:
             ttl += 1   # v0.5: bolder fallback in low path diversity
         if self._sparse_guard_active():
             ttl = max(3, ttl)   # v0.11: sparse keeps the front alive (TTL >= 3)
+        # v2 NodeDB: when the destination's own traffic reached us at h hops,
+        # a radius of h+1 provably covers it — shrink the flood (never grow:
+        # growth is the job of the confidence logic above). No entry ->
+        # current TTL (graceful). h is MEASURED from decoded packets, not
+        # estimated — same evidence class as firmware NodeDB hops_away.
+        if self.p.get('ndb_enabled', False) and p.destId != BROADCAST_ID:
+            ent = self.nodedb.get(p.destId)
+            if ent is not None:
+                want = int(ent['hops']) + 1
+                if want < ttl:
+                    self.stats['ndb_radius_scaled'] += 1
+                    ttl = max(1, want)
         r = self._relay_packet(p, designations=None, next_flood_ttl=ttl)
         # F0.6: did the fallback deliver (echo/ACK afterwards)?
         base_count = len(self.packet_relayers.get(p.seq, set()))
@@ -3514,6 +3625,7 @@ class AdaptiveRelay:
                           p.wantAck, False, None, self.env.now,
                           node.connectivity_map, node.baseline_pathloss_matrix)
         pNew.hopLimit = p.hopLimit - 1
+        pNew.hopStart = getattr(p, 'hopStart', None)   # header field, copied unchanged
         node.packets.append(pNew)
         node.env.process(node.transmit(pNew))
         return True

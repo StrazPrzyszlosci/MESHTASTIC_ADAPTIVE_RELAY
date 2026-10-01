@@ -170,9 +170,12 @@ class TestLprIntegration(unittest.TestCase):
 
     def test_hop_depth_observation_builds_potential(self):
         ar = make_ar(enable_lpr=True)
-        # packet from dest=9 relayed by 5; hopLimit 3 (orig) -> 1: the packet
-        # travelled 2 hops from the origin, so relay 5 is ~1 hop from it
-        ar.learn(StubPacket(seq=1, orig=9, tx=5, hop=1), -80.0)
+        # packet from dest=9 relayed by 5; hopStart 3 -> hopLimit 1: the
+        # packet travelled 2 hops from the origin (firmware-faithful
+        # hop_start - hop_limit; hopStart is a real header field)
+        p = StubPacket(seq=1, orig=9, tx=5, hop=1)
+        p.hopStart = 3
+        ar.learn(p, -80.0)
         self.assertLess(ar.potential.get_phi(9), float('inf'))
         self.assertLess(ar.potential.get_neighbor_phi(5, 9), float('inf'))
 
