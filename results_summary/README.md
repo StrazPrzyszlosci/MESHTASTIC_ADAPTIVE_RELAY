@@ -16,6 +16,8 @@ Adaptive Relay, no parameter tuning on this base).
 | `raw_d5r_*` / `raw_d5v_*` | D5 node-death campaigns | bridge/hub/linear/dense x MF/N3S_SHEP2D x seeds 1-10; critical node killed at t=300s (relay mode; d5v = revived at t=450s) |
 | `raw_d6_*` | D6 watchdog-deafness campaigns | bridge/hub/linear x MF/N3S_SHEP2D x seeds 1-10; RX disabled on the critical node 300-420s (TX unaffected) |
 | `raw_ndb_*` | NodeDB-analog layer verdict panel | 5 topologies x N3S_SHEP2D_NDB x seeds 1-10 (paired vs raw_dev baselines). VERDICT: INERT — bit-identical to N3S_SHEP2D in dense/rural/linear, bridge +0.04pp (noise); census shields fired but K was non-binding; the rural_corridor loss lives in rank2-fallback (K2), not rank1 census. Layer kept gated OFF. |
+| `raw_ndb_k2.jsonl` | K2-shield pre-registered experiment | 5 topologies x N3S_SHEP2D_NDB(ndb_k2_shield) x seeds 1-10. VERDICT: FAIL — rural_corridor WORSENED to −0.40pp [−0.72,−0.07] vs MF (baseline −0.10), mixed30 regressed −0.75pp [−1.18,−0.32] 0/10. Fallback (rank2) suppressions are NET-BENEFICIAL: releasing weak-margin copies adds collision noise that kills useful copies downstream. Third attempt at the rural loss refuted — accepted as a structural cost of the hybrid. |
+| `raw_ndb_k2_ablation.jsonl` | Grace contract, cross-platform | Accidental 50-run Kaggle panel with the hopStart carrier missing from the staged commit: nodedb empty (has-flag guard), shields silent, results BIT-IDENTICAL to N3S_SHEP2D everywhere — the strongest possible confirmation that absence of data cannot change behavior. |
 
 Paired statistics are computed with `panel_stats.py`:
 
