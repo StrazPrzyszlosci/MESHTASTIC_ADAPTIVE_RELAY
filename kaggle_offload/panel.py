@@ -91,6 +91,14 @@ def main():
                 'n_nodes', 'xsize', 'ysize'):
         if params.get(opt) is not None:
             cmd += ['--' + opt.replace('_', '-'), str(params[opt])]
+    # boolean flags (store_true in the runner): value '1'/'true' -> bare flag
+    for opt in ('realistic_wire', 'no_hopstart'):
+        v = params.get(opt)
+        if v is not None:
+            if str(v).lower() in ('1', 'true', 'on', 'yes'):
+                cmd += ['--' + opt.replace('_', '-')]
+            elif str(v).lower() not in ('0', 'false', 'off', 'no'):
+                cmd += ['--' + opt.replace('_', '-'), str(v)]
     sh(cmd, cwd=repo)
 
     # expose raw panel outputs for `kaggle kernels output`
