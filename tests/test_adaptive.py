@@ -5,6 +5,7 @@ import unittest
 import simpy
 
 from lib.config import Config
+from lib.node import MESHTASTIC_ROLE
 from adaptive_scenarios import build_scenario
 from lib.adaptive import AdaptiveRelay, NeighborInfo, BROADCAST_ID, PRIMARY, BACKUP1
 
@@ -1807,6 +1808,47 @@ class TestRealisticWire(unittest.TestCase):
         p.is_echo_probe = True
         v = _MaskedCopy(p)
         self.assertEqual(v.txNodeId, 5)   # probe ACK path still attributed
+
+
+class TestN3RoleOrder(unittest.TestCase):
+    """v2 role-ordered whisper (relay-side backbone): a node knows its OWN
+    role (firmware-real, zero airtime) — infra roles lead the broadcast
+    response within the reliability floor, plain clients judge on the
+    census, constrained classes never lead. Flag off = strong_first exact."""
+
+    def _ranked(self, role, rssi_db=-70.0, **over):
+        ar = make_ar(n3_enabled=True, n3_order_policy='strong_first',
+                     n3_role_order=True, **over)
+        ar.node.role = role
+        p = StubPacket(seq=1, tx=5)
+        p.rssiAtN = {0: rssi_db}
+        return ar._n3_rank(p)
+
+    def test_router_leads_within_floor(self):
+        self.assertEqual(self._ranked(MESHTASTIC_ROLE.ROUTER), 0)
+        self.assertEqual(self._ranked(MESHTASTIC_ROLE.ROUTER_LATE), 0)
+        self.assertEqual(self._ranked(MESHTASTIC_ROLE.ROUTER_CLIENT), 0)
+
+    def test_router_below_floor_never_leads(self):
+        self.assertEqual(self._ranked(MESHTASTIC_ROLE.ROUTER, rssi_db=-140.0), 2)
+
+    def test_plain_client_yields_to_routers(self):
+        # strong margin would give rank 0 under strong_first; under role
+        # order a plain CLIENT is census-judged (rank 1)
+        self.assertEqual(self._ranked(MESHTASTIC_ROLE.CLIENT), 1)
+        self.assertEqual(self._ranked(MESHTASTIC_ROLE.CLIENT_BASE), 1)
+
+    def test_constrained_classes_fallback_only(self):
+        self.assertEqual(self._ranked(MESHTASTIC_ROLE.SENSOR), 2)
+        self.assertEqual(self._ranked(MESHTASTIC_ROLE.TRACKER), 2)
+
+    def test_flag_off_is_strong_first_exact(self):
+        ar = make_ar(n3_enabled=True, n3_order_policy='strong_first',
+                     n3_role_order=False)
+        ar.node.role = MESHTASTIC_ROLE.SENSOR
+        p = StubPacket(seq=1, tx=5)
+        p.rssiAtN = {0: -70.0}          # strong margin -> rank 0 by margin
+        self.assertEqual(ar._n3_rank(p), 0)   # role ignored when off
 
 
 if __name__ == '__main__':

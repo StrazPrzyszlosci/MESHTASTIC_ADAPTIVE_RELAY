@@ -693,7 +693,8 @@ class Config:
             'n1_max_pending': 64,             # static pending bound
             # --- v0.14 N3: ranked whisper (ToA windows; census shared with N1) ---
             'n3_enabled': False,
-            'n3_gap_toa': 1.25,               # inter-rank gap in ToA multiples
+            'n3_gap_toa': 1.25,                # inter-rank gap in ToA multiples
+            'n3_role_order': False,            # own-role-ordered whisper (relay-side backbone)
             'n3_t0_frac': 0.25,               # RANK0 window in ToA multiples
             'n3_min_link_margin_db': 6.0,      # reliability floor (bounded edge)
             'n3_edge_margin_db': 12.0,         # weak/strong split for SNR policies

@@ -133,6 +133,9 @@ VARIANTS = {
                                             'n1_mode': 'ndb', 'n3_gap_toa': 1.25,
                                             'shepherd_enabled': True, 'ndb_enabled': True,
                                             'ndb_k2_shield': True}),
+    'N3S_SHEP2D_RO': ('ADAPTIVE_RELAY', {'n3_enabled': True, 'n3_order_policy': 'strong_first',
+                                          'n1_mode': 'degree', 'n3_gap_toa': 1.25,
+                                          'shepherd_enabled': True, 'n3_role_order': True}),
     # v0.14 E7/N4: airtime-budgeted rescue on the hybrid (bucket in ms of
     # real ToA; AIMD; structural multiplier)
     'N3S_SHEP2_N4': ('ADAPTIVE_RELAY', {'n3_enabled': True, 'n3_order_policy': 'strong_first',

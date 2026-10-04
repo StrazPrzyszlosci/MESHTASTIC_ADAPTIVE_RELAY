@@ -1680,6 +1680,21 @@ class AdaptiveRelay:
         margin = float(rssi) - float(self.conf.current_preset['sensitivity'])
         if margin < float(self.p.get('n3_min_link_margin_db', 6.0)):
             return 2                       # below reliability floor: never preferred
+        if self.p.get('n3_role_order', False):
+            # v2 role-ordered whisper (relay-side backbone). A node knows
+            # ITS OWN role (firmware-real, zero airtime, REALISTIC_WIRE-safe:
+            # no neighbor identity involved). Infra roles lead the broadcast
+            # response — the "directed backbone + local flood" pattern for
+            # the broadcast path, implemented at response ordering instead
+            # of designation (which would need per-neighbor role knowledge
+            # that only NodeInfo exchange provides).
+            role = self.node.role.value if hasattr(self.node.role, 'value') \
+                else str(self.node.role)
+            if role in ('ROUTER', 'ROUTER_CLIENT', 'ROUTER_LATE'):
+                return 0                   # backbone speaks first (within floor)
+            if role in ('SENSOR', 'TRACKER', 'CLIENT_HIDDEN', 'LOST_AND_FOUND'):
+                return 2                   # constrained classes never lead
+            return 1                       # plain client: census-judged, yields to routers
         weak = margin <= float(self.p.get('n3_edge_margin_db', 12.0))
         if policy == 'edge_first':
             return 0 if weak else 1
